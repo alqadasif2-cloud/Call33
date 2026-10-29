@@ -1,0 +1,6 @@
+{
+  "name": "نسخي الاحتياطي والعارض المشفّر",
+  "description": "منصة ويب للنسخ الاحتياطي الشخصي واستعراض السجلات المشفّرة طرفيًا (المكالمات، الرسائل النصية، والحافظة) بتشفير AES-256-GCM على الجهاز مع الاستيراد والتصدير.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

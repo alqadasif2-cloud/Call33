@@ -1,0 +1,164 @@
+name: Build & Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: اختبارات الوحدة
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.9" }
+      - name: Unit tests
+        run: gradle --no-daemon :core:testDebugUnitTest :backup-app:testDebugUnitTest :viewer-app:testDebugUnitTest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: "**/build/reports/tests/**"
+
+  rules:
+    name: اختبار قواعد Firebase على المحاكي
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install and verify Custom Auth Cloud Function
+        run: |
+          npm install --prefix firebase/functions
+          node -e "const fn = require('./firebase/functions/index.js'); if (typeof fn.authUsername !== 'function') process.exit(1);"
+          node --test firebase/functions/authCore.test.js
+      - name: Install rules test dependencies
+        run: npm install --prefix firebase/rules-test
+      - name: Run rules tests
+        working-directory: firebase
+        run: npx --yes firebase-tools@13 emulators:exec --only firestore --project demo-backup "npm --prefix rules-test test"
+
+  build:
+    name: بناء ملفي APK
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.9" }
+      - name: Restore or generate google-services.json
+        env:
+          GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          GS_RAW: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, pathlib, re, sys
+
+          raw = (os.environ.get("GS_B64") or os.environ.get("GS_RAW") or "").strip()
+
+          existing_gs = next(
+              (
+                  p
+                  for p in (
+                      pathlib.Path("google-services.json"),
+                      pathlib.Path("backup-app/google-services.json"),
+                      pathlib.Path("viewer-app/google-services.json"),
+                  )
+                  if p.is_file()
+              ),
+              None,
+          )
+
+          if raw:
+              if raw.startswith("{"):
+                  content = raw.encode("utf-8")
+              else:
+                  cleaned = "".join(raw.split())
+                  content = base64.b64decode(cleaned)
+              parsed = json.loads(content.decode("utf-8-sig"))
+          elif existing_gs is not None:
+              content = existing_gs.read_bytes()
+              parsed = json.loads(content.decode("utf-8-sig"))
+              print(f"تم استخدام {existing_gs} الموجود في المشروع تلقائيًا.")
+          else:
+              applet_cfg_path = pathlib.Path("firebase-applet-config.json")
+              if not applet_cfg_path.exists():
+                  print("::error::لم يتم العثور على firebase-applet-config.json أو google-services.json.", file=sys.stderr)
+                  sys.exit(1)
+
+              cfg = json.loads(applet_cfg_path.read_text(encoding="utf-8"))
+              project_id = cfg["projectId"]
+              api_key = cfg["apiKey"]
+              project_number = str(cfg.get("messagingSenderId") or "000000000000")
+              storage_bucket = cfg.get("storageBucket") or f"{project_id}.appspot.com"
+              oauth_client_id = cfg.get("oAuthClientId") or ""
+
+              app_id_raw = cfg.get("appId") or ""
+              m = re.search(r":([0-9a-fA-F]{8,})$", app_id_raw)
+              hex_tail = (m.group(1).lower() if m else "9a6d13baf4427440")
+
+              def make_client(pkg: str, idx: int) -> dict:
+                  oauth_list = (
+                      [{"client_id": oauth_client_id, "client_type": 3}]
+                      if oauth_client_id
+                      else []
+                  )
+                  return {
+                      "client_info": {
+                          "mobilesdk_app_id": f"1:{project_number}:android:{hex_tail[:14]}{idx:02x}",
+                          "android_client_info": {"package_name": pkg},
+                      },
+                      "oauth_client": oauth_list,
+                      "api_key": [{"current_key": api_key}],
+                      "services": {
+                          "appinvite_service": {
+                              "other_platform_oauth_client": oauth_list,
+                          }
+                      },
+                  }
+
+              parsed = {
+                  "project_info": {
+                      "project_number": project_number,
+                      "project_id": project_id,
+                      "storage_bucket": storage_bucket,
+                  },
+                  "client": [
+                      make_client("app.backup.source", 1),
+                      make_client("app.backup.viewer", 2),
+                  ],
+                  "configuration_version": "1",
+              }
+              content = json.dumps(parsed, indent=2).encode("utf-8")
+              print(f"تم توليد google-services.json تلقائيًا من firebase-applet-config.json للمشروع {project_id}.")
+
+          pkgs = {
+              c.get("client_info", {}).get("android_client_info", {}).get("package_name")
+              for c in parsed.get("client", [])
+          }
+          missing = {"app.backup.source", "app.backup.viewer"} - pkgs
+          if missing:
+              print(f"::error::ملف google-services.json لا يحتوي على الحزم المطلوبة: {', '.join(sorted(missing))}.", file=sys.stderr)
+              sys.exit(1)
+
+          for target in ("backup-app/google-services.json", "viewer-app/google-services.json"):
+              pathlib.Path(target).write_bytes(content)
+          print("اكتمل تجهيز google-services.json بنجاح للحزمتين app.backup.source و app.backup.viewer.")
+          PY
+      - name: Assemble APKs
+        run: gradle --no-daemon :backup-app:assembleDebug :viewer-app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backup-app-apk
+          path: backup-app/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viewer-app-apk
+          path: viewer-app/build/outputs/apk/debug/*.apk

@@ -1,0 +1,310 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // 192-bit PBKDF2-HMAC-SHA256 derived account capability ID (v_ + 48 lowercase hex chars)
+    function isVaultCapabilityId(uid) {
+      return uid is string && uid.size() == 50 && uid.matches('^v_[a-f0-9]{48}$');
+    }
+
+    function isAuthorizedOwner(uid) {
+      return (isSignedIn() && request.auth.uid == uid)
+        || (!isSignedIn() && isVaultCapabilityId(uid));
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Master Gate: Verifies parent device exists and belongs to the authorized account owner
+    function hasOwnedParentDevice(uid, deviceId) {
+      return exists(/databases/$(database)/documents/users/$(uid)/devices/$(deviceId))
+        && get(/databases/$(database)/documents/users/$(uid)/devices/$(deviceId)).data.ownerId == uid;
+    }
+
+    // Validation Blueprint: UserProfile (/users/{uid})
+    function isValidUserProfile(data, uid) {
+      return data.keys().hasAll(['uid', 'username', 'usernameLower', 'usernameId', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'usernameId', 'createdAt'])
+        && data.uid is string
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.uid == uid
+        && (!isSignedIn() || data.uid == request.auth.uid)
+        && data.username is string
+        && data.username.size() >= 3
+        && data.username.size() <= 32
+        && data.username.matches('^[a-zA-Z0-9_.\\-\u0600-\u06FF]+$')
+        && data.usernameLower is string
+        && data.usernameLower.size() >= 3
+        && data.usernameLower.size() <= 32
+        && data.usernameLower.matches('^[a-z0-9_.\\-\u0600-\u06FF]+$')
+        && data.usernameId is string
+        && data.usernameId.size() == 40
+        && data.usernameId.matches('^[a-f0-9]+$')
+        && data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint: UsernameClaim (/usernames/{usernameId})
+    function isValidUsernameClaim(data) {
+      return data.keys().hasAll(['uid', 'usernameLower', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'usernameLower', 'createdAt'])
+        && data.uid is string
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && ((isSignedIn() && data.uid == request.auth.uid) || (!isSignedIn() && isVaultCapabilityId(data.uid)))
+        && data.usernameLower is string
+        && data.usernameLower.size() >= 3
+        && data.usernameLower.size() <= 32
+        && data.usernameLower.matches('^[a-z0-9_.\\-\u0600-\u06FF]+$')
+        && data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint: CryptoMeta (/users/{uid}/meta/crypto)
+    function isValidCryptoMeta(data, uid) {
+      return data.keys().hasAll(['uid', 'salt', 'iter', 'checkIv', 'check', 'v', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'salt', 'iter', 'checkIv', 'check', 'v', 'createdAt'])
+        && data.uid is string
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.uid == uid
+        && (!isSignedIn() || data.uid == request.auth.uid)
+        && data.salt is string
+        && data.salt.size() >= 16
+        && data.salt.size() <= 64
+        && data.iter is int
+        && data.iter >= 100000
+        && data.iter <= 1000000
+        && data.checkIv is string
+        && data.checkIv.size() >= 12
+        && data.checkIv.size() <= 64
+        && data.check is string
+        && data.check.size() >= 16
+        && data.check.size() <= 256
+        && data.v is int
+        && data.v == 1
+        && data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint: Device (/users/{uid}/devices/{deviceId})
+    function isValidDevice(data, uid) {
+      return data.keys().hasAll(['ownerId', 'name', 'model', 'enabled', 'lastSyncAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'name', 'model', 'enabled', 'lastSyncAt', 'createdAt', 'updatedAt'])
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == uid
+        && (!isSignedIn() || data.ownerId == request.auth.uid)
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 100
+        && data.model is string
+        && data.model.size() >= 1
+        && data.model.size() <= 100
+        && data.enabled is list
+        && data.enabled.size() <= 3
+        && data.enabled.hasOnly(['call', 'sms', 'clip'])
+        && data.lastSyncAt is int
+        && data.lastSyncAt >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: EncRecord (/users/{uid}/devices/{deviceId}/records/{recId})
+    function isValidRecord(data, uid, deviceId) {
+      return data.keys().hasAll(['ownerId', 'deviceId', 'type', 'ts', 'iv', 'data', 'v', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'deviceId', 'type', 'ts', 'iv', 'data', 'v', 'createdAt', 'updatedAt'])
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == uid
+        && (!isSignedIn() || data.ownerId == request.auth.uid)
+        && data.deviceId is string
+        && data.deviceId.size() >= 1
+        && data.deviceId.size() <= 128
+        && data.deviceId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.deviceId == deviceId
+        && data.type is string
+        && data.type.size() >= 3
+        && data.type.size() <= 10
+        && data.type in ['call', 'sms', 'clip']
+        && data.ts is int
+        && data.ts > 0
+        && data.ts <= 9999999999999
+        && data.iv is string
+        && data.iv.size() >= 12
+        && data.iv.size() <= 64
+        && data.data is string
+        && data.data.size() >= 16
+        && data.data.size() <= 500000
+        && data.v is int
+        && data.v == 1
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Server-Only Password Hashes (Cloud Functions Admin SDK ONLY; zero client access)
+    match /authCredentials/{usernameId} {
+      allow read, write: if false;
+    }
+
+    // Server-Only Brute-Force Rate Limit Counters (Cloud Functions Admin SDK ONLY; zero client access)
+    match /authRateLimits/{limitId} {
+      allow read, write: if false;
+    }
+
+    // Global Username Uniqueness Lock (Write-once; unreadable by clients to prevent enumeration)
+    match /usernames/{usernameId} {
+      allow get: if false;
+      allow list: if false;
+      allow create: if isValidId(usernameId)
+        && usernameId.size() == 40
+        && usernameId.matches('^[a-f0-9]+$')
+        && isValidUsernameClaim(incoming())
+        && incoming().createdAt == request.time
+        && (
+          isSignedIn()
+          || (
+            existsAfter(/databases/$(database)/documents/users/$(incoming().uid))
+            && getAfter(/databases/$(database)/documents/users/$(incoming().uid)).data.usernameId == usernameId
+            && getAfter(/databases/$(database)/documents/users/$(incoming().uid)).data.usernameLower == incoming().usernameLower
+          )
+        );
+      allow update: if false;
+      allow delete: if isValidId(usernameId)
+        && resource != null
+        && (
+          (isSignedIn() && existing().uid == request.auth.uid)
+          || (
+            !isSignedIn()
+            && isVaultCapabilityId(existing().uid)
+            && exists(/databases/$(database)/documents/users/$(existing().uid))
+            && !existsAfter(/databases/$(database)/documents/users/$(existing().uid))
+          )
+        );
+    }
+
+    // Account Profile (/users/{uid})
+    match /users/{uid} {
+      allow get: if isAuthorizedOwner(uid) && isValidId(uid) && (resource == null || existing().uid == uid);
+      allow list: if false;
+      allow create: if isAuthorizedOwner(uid)
+        && isValidId(uid)
+        && isValidUserProfile(incoming(), uid)
+        && incoming().createdAt == request.time
+        && (
+          isSignedIn()
+          || (
+            existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameId))
+            && getAfter(/databases/$(database)/documents/usernames/$(incoming().usernameId)).data.uid == uid
+          )
+        );
+      allow update: if false;
+      allow delete: if isAuthorizedOwner(uid) && isValidId(uid) && (resource == null || existing().uid == uid);
+
+      // Cryptographic Root Metadata (Immutable after creation; no list queries permitted)
+      match /meta/{metaId} {
+        allow get: if isAuthorizedOwner(uid) && isValidId(uid) && metaId == 'crypto' && (resource == null || existing().uid == uid);
+        allow list: if false;
+        allow create: if isAuthorizedOwner(uid)
+          && isValidId(uid)
+          && metaId == 'crypto'
+          && isValidCryptoMeta(incoming(), uid)
+          && incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isAuthorizedOwner(uid) && isValidId(uid) && metaId == 'crypto' && (resource == null || existing().uid == uid);
+      }
+
+      // Registered Backup Devices
+      match /devices/{deviceId} {
+        allow get: if isAuthorizedOwner(uid) && isValidId(uid) && isValidId(deviceId) && (resource == null || existing().ownerId == uid);
+        allow list: if isAuthorizedOwner(uid) && isValidId(uid) && existing().ownerId == uid;
+        allow create: if isAuthorizedOwner(uid)
+          && isValidId(uid)
+          && isValidId(deviceId)
+          && isValidDevice(incoming(), uid)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isAuthorizedOwner(uid)
+          && isValidId(uid)
+          && isValidId(deviceId)
+          && isValidDevice(incoming(), uid)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'model', 'enabled', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['lastSyncAt', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'model', 'enabled', 'lastSyncAt', 'updatedAt'])
+          );
+        allow delete: if isAuthorizedOwner(uid) && isValidId(uid) && isValidId(deviceId) && (resource == null || existing().ownerId == uid);
+
+        // Encrypted Records Subcollection (Protected by Master Gate + Query Enforcer)
+        match /records/{recId} {
+          allow get: if isAuthorizedOwner(uid)
+            && isValidId(uid)
+            && isValidId(deviceId)
+            && isValidId(recId)
+            && (resource == null || existing().ownerId == uid)
+            && hasOwnedParentDevice(uid, deviceId);
+          allow list: if isAuthorizedOwner(uid)
+            && isValidId(uid)
+            && isValidId(deviceId)
+            && existing().ownerId == uid;
+          allow create: if isAuthorizedOwner(uid)
+            && isValidId(uid)
+            && isValidId(deviceId)
+            && isValidId(recId)
+            && isValidRecord(incoming(), uid, deviceId)
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && hasOwnedParentDevice(uid, deviceId);
+          allow update: if isAuthorizedOwner(uid)
+            && isValidId(uid)
+            && isValidId(deviceId)
+            && isValidId(recId)
+            && isValidRecord(incoming(), uid, deviceId)
+            && incoming().ownerId == existing().ownerId
+            && incoming().deviceId == existing().deviceId
+            && incoming().type == existing().type
+            && incoming().ts == existing().ts
+            && incoming().v == existing().v
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['iv', 'data', 'updatedAt'])
+            && hasOwnedParentDevice(uid, deviceId);
+          allow delete: if isAuthorizedOwner(uid)
+            && isValidId(uid)
+            && isValidId(deviceId)
+            && isValidId(recId)
+            && (resource == null || existing().ownerId == uid)
+            && hasOwnedParentDevice(uid, deviceId);
+        }
+      }
+    }
+  }
+}

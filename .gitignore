@@ -1,0 +1,13 @@
+node_modules/
+**/node_modules/
+build/
+**/build/
+.gradle/
+dist/
+coverage/
+.DS_Store
+*.log
+local.properties
+**/google-services.json
+.env*
+!.env.example

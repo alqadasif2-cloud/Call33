@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">نسخي الاحتياطي</string>
+    <string name="share_label">حفظ في النسخ الاحتياطي</string>
+    <string name="process_text_label">حفظ في نسخي الاحتياطي</string>
+</resources>

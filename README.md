@@ -1,11 +1,23 @@
-<div align="center">
+# نسخي الاحتياطي والعارض المشفّر (`personal-backup`)
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+منظومة نسخ احتياطي شخصي مشفّرة طرفيًا باللغة العربية (**تطبيق النسخ `backup-app`، تطبيق العارض `viewer-app`، وتطبيق الويب المتكامل**)، تعمل بحساب موحّد بسيط يعتمد على **اسم المستخدم وكلمة المرور فقط** مع ربط مباشر بـ **Firebase Authentication** و**Cloud Firestore**.
 
-  <h1>Built with AI Studio</h2>
+## المزايا الأساسية
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+- **تسجيل دخول وإنشاء حساب مبسّط بحساب موحّد:**
+  - شاشة **«إنشاء حساب»** وشاشة **«تسجيل الدخول»** تحتويان على حقلين فقط (**اسم المستخدم** و**كلمة المرور**) دون طلب بريد إلكتروني أو رقم هاتف أو حساب Google، مع الدخول المباشر للتطبيق وحفظ الجلسة تلقائيًا وزر واضح لـ **«تسجيل الخروج»**.
+  - يعمل الحساب نفسه في **`backup-app`** و**`viewer-app`** وتطبيق الويب للوصول إلى النسخ الاحتياطية الخاصة بالمستخدم نفسه فقط.
+- **حماية كلمات المرور وقاعدة البيانات (`firestore.rules` + `firebase/functions`):**
+  - عدم تخزين كلمات المرور كنص عادي مطلقًا، مع دعم المصادقة المخصصة عبر Cloud Functions (`scrypt` + ملح عشوائي + `timingSafeEqual`) والحماية من محاولات التخمين المتكررة (`Rate Limiting`).
+  - منع تكرار أسماء المستخدمين (`/usernames/{usernameId}`), وربط كل حساب بمعرّف `UID` فريد (`/users/{uid}`), ومنع التطبيقات نهائيًا من قراءة أو تعديل سجلات كلمات المرور (`/authCredentials`) أو عدادات المحاولات (`/authRateLimits`).
+  - قواعد أمان صارمة تضمن ألا يصل أي مستخدم إلا إلى أجهزته وسجلاته المشفّرة فقط.
+- **تشفير طرفي كامل على الجهاز (`End-to-End Encryption`):**
+  - اشتقاق مفتاح `AES-256-GCM` عبر `PBKDF2-HMAC-SHA256` (310,000 تكرار) وحفظه محليًا داخل مخزن المفاتيح الآمن (`Android Keystore` على أندرويد و`IndexedDB` المعزول على الويب) حتى تُفتح الجلسة تلقائيًا وتُمسح فور تسجيل الخروج.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## هيكل المستودع
 
-</div>
+- `core/` و`backup-app/` و`viewer-app/`: تطبيقات أندرويد الأصلية (Kotlin + Jetpack Compose) لبناء ملفي `APK`.
+- `firebase/functions/`: وظيفة `Cloud Functions` للمصادقة المخصصة (`Custom Authentication`) مع اختبارات `scrypt` والحماية من التخمين.
+- `firestore.rules` و`firebase/rules-test/`: قواعد أمان `Firestore` الموحّدة واختبارات المحاكي لعزل الحسابات.
+- `src/`: تطبيق الويب المتكامل (React + TypeScript + Vite).
+- `.github/workflows/build.yml`: مسار البناء والاختبار الآلي وإنتاج ملفي `APK` (راجع `SETUP_AR.md`).

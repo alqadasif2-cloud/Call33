@@ -1,0 +1,17 @@
+{
+  "name": "personal-backup-functions",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Firebase Custom Authentication Cloud Functions (Username + Password with scrypt & rate limiting)",
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test authCore.test.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.1.0"
+  }
+}

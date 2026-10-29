@@ -1,0 +1,323 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Account profile linking the unique username to its Firebase Auth UID. Immutable once created.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique Firebase Auth UID of the account owner."
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 3,
+          "pattern": "^[a-zA-Z0-9_.\\-\u0600-\u06FF]+$",
+          "description": "Display username chosen at registration."
+        },
+        "usernameLower": {
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 3,
+          "pattern": "^[a-z0-9_.\\-\u0600-\u06FF]+$",
+          "description": "Canonical lowercase username."
+        },
+        "usernameId": {
+          "type": "string",
+          "maxLength": 40,
+          "minLength": 40,
+          "pattern": "^[a-f0-9]+$",
+          "description": "Deterministic 40-char SHA-256 hex identifier of usernameLower."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the account profile was created."
+        }
+      },
+      "required": ["uid", "username", "usernameLower", "usernameId", "createdAt"]
+    },
+    "UsernameClaim": {
+      "title": "UsernameClaim",
+      "description": "Write-once uniqueness lock mapping a canonical username hash to its owner UID. Unreadable by clients to prevent enumeration.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID that owns this username."
+        },
+        "usernameLower": {
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 3,
+          "pattern": "^[a-z0-9_.\\-\u0600-\u06FF]+$",
+          "description": "Canonical lowercase username."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the username was claimed."
+        }
+      },
+      "required": ["uid", "usernameLower", "createdAt"]
+    },
+    "AuthCredential": {
+      "title": "AuthCredential",
+      "description": "Server-only password credential record (scrypt hash + random salt) managed exclusively by Cloud Functions Admin SDK.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID bound to this credential."
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 3,
+          "description": "Original username."
+        },
+        "usernameLower": {
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 3,
+          "description": "Canonical lowercase username."
+        },
+        "passwordHash": {
+          "type": "string",
+          "maxLength": 256,
+          "minLength": 64,
+          "description": "Hex-encoded 64-byte scrypt key derivation output."
+        },
+        "passwordSalt": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 32,
+          "description": "Hex-encoded 32-byte cryptographically random salt."
+        },
+        "alg": {
+          "type": "string",
+          "enum": ["scrypt-v1"],
+          "description": "Password hashing algorithm identifier."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of credential creation."
+        }
+      },
+      "required": ["uid", "username", "usernameLower", "passwordHash", "passwordSalt", "alg", "createdAt"]
+    },
+    "AuthRateLimit": {
+      "title": "AuthRateLimit",
+      "description": "Server-only brute-force protection state per IP and username key managed exclusively by Cloud Functions Admin SDK.",
+      "type": "object",
+      "properties": {
+        "attempts": {
+          "type": "integer",
+          "description": "Count of failed or repeated attempts within the active window."
+        },
+        "windowStartMs": {
+          "type": "integer",
+          "description": "Epoch milliseconds when the current rate-limit window started."
+        },
+        "blockedUntilMs": {
+          "type": "integer",
+          "description": "Epoch milliseconds until which authentication attempts are rejected."
+        }
+      },
+      "required": ["attempts", "windowStartMs", "blockedUntilMs"]
+    },
+    "CryptoMeta": {
+      "title": "CryptoMeta",
+      "description": "End-to-end encryption PBKDF2 salt and AES-256-GCM password verification box for a user vault. Immutable once created.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the vault owner."
+        },
+        "salt": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 16,
+          "description": "Base64-encoded 16-byte random PBKDF2 salt."
+        },
+        "iter": {
+          "type": "integer",
+          "description": "PBKDF2-HMAC-SHA256 iteration count (default 310000)."
+        },
+        "checkIv": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 12,
+          "description": "Base64-encoded 12-byte GCM initialization vector for password check."
+        },
+        "check": {
+          "type": "string",
+          "maxLength": 256,
+          "minLength": 16,
+          "description": "Base64-encoded AES-256-GCM verification ciphertext and authentication tag."
+        },
+        "v": {
+          "type": "integer",
+          "enum": [1],
+          "description": "Crypto schema version."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the vault key metadata was initialized."
+        }
+      },
+      "required": ["uid", "salt", "iter", "checkIv", "check", "v", "createdAt"]
+    },
+    "Device": {
+      "title": "Device",
+      "description": "Registered source device backing up encrypted calls, SMS messages, and manual clipboard snippets.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the device owner."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "description": "User-assigned display name of the device."
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "description": "Device or browser platform descriptor."
+        },
+        "enabled": {
+          "type": "array",
+          "description": "Bounded list (max 3) of enabled backup categories from ['call', 'sms', 'clip']."
+        },
+        "lastSyncAt": {
+          "type": "integer",
+          "description": "Epoch milliseconds of the last confirmed batch upload (0 if never synced)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of initial registration."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest configuration or sync update."
+        }
+      },
+      "required": ["ownerId", "name", "model", "enabled", "lastSyncAt", "createdAt", "updatedAt"]
+    },
+    "EncRecord": {
+      "title": "EncRecord",
+      "description": "End-to-end encrypted backup record (AES-256-GCM with AAD bound to id|type|ts) identified by deterministic SHA-256 hash.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the record owner."
+        },
+        "deviceId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent device identifier."
+        },
+        "type": {
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 3,
+          "enum": ["call", "sms", "clip"],
+          "description": "Record category used for filtering."
+        },
+        "ts": {
+          "type": "integer",
+          "description": "Original event timestamp in epoch milliseconds."
+        },
+        "iv": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 12,
+          "description": "Base64-encoded 12-byte GCM initialization vector."
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 500000,
+          "minLength": 16,
+          "description": "Base64-encoded AES-256-GCM encrypted JSON payload + 16-byte authentication tag."
+        },
+        "v": {
+          "type": "integer",
+          "enum": [1],
+          "description": "Record encryption format version."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of initial upload."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest re-upload."
+        }
+      },
+      "required": ["ownerId", "deviceId", "type", "ts", "iv", "data", "v", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "Stores the immutable username-to-UID account profile owned exclusively by {uid}."
+    },
+    "/usernames/{usernameId}": {
+      "schema": "UsernameClaim",
+      "description": "Enforces global case-insensitive username uniqueness; write-once on registration, unreadable by clients."
+    },
+    "/authCredentials/{usernameId}": {
+      "schema": "AuthCredential",
+      "description": "Server-only scrypt password hashes for Firebase Custom Authentication; completely inaccessible to client SDKs."
+    },
+    "/authRateLimits/{limitId}": {
+      "schema": "AuthRateLimit",
+      "description": "Server-only brute-force rate limit counters for registration and login endpoints; completely inaccessible to client SDKs."
+    },
+    "/users/{uid}/meta/{metaId}": {
+      "schema": "CryptoMeta",
+      "description": "Stores the immutable E2EE salt and password verification box at /users/{uid}/meta/crypto."
+    },
+    "/users/{uid}/devices/{deviceId}": {
+      "schema": "Device",
+      "description": "Stores registered backup devices belonging exclusively to {uid}."
+    },
+    "/users/{uid}/devices/{deviceId}/records/{recId}": {
+      "schema": "EncRecord",
+      "description": "Stores deterministic-ID encrypted backup records belonging to {deviceId} under {uid}."
+    }
+  }
+}
